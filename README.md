@@ -1,14 +1,13 @@
 Propeller micro to TPIC8101 Interface
 
-/*********************************************************************************************************************/
+/***************************************************************************************************************************/
 
 Setup:
 
 Use simpleide compiler.  Set compiler type to "C", set memory model to "LMM Main Ram", set optimization to 
 "-O2Speed".  The last two settings significantly reduce the time needed to send and recieve data via SPI.
 
-/*********************************************************************************************************************/
-
+/***************************************************************************************************************************/
 Connections: Must use current limiting resistors for 5v inputs.  Voltage dividers not needed due to propeller's 
 internal over voltage diode.  I repeat must use current limiting resistor with 5v inputs.  4k7 ohm resistor will 
 do the job.
@@ -24,8 +23,7 @@ Propeller             Others
 16                    Cam Sensor
 17                    Crank Sensor
 
-/*********************************************************************************************************************/
-
+/***************************************************************************************************************************/
 
 Information about this project:
 
