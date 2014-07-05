@@ -36,6 +36,10 @@ The integrated circuit (IC for short) or chip that is able to do this is Texas I
 
 Integration is simply determining the area under the curve.  The IC is integrating the sine wave output from the knock sensor.  The area under the curve depends on the voltage and amount of time.  The longer the listening window, the more sine waves the IC receives, which results in more area under the curve.  This is why the time constant is so important. 
 
+/***************************************************************************************************************************/
+
+The code:
+
 My current code varies the time constant with rpm (check out the “changTc” function in the source code for equation) and
 takes full advantage of all the aspects the TPIC8101 offers, even the digital integrator output.  This means an analog to
 digital converter is not needed.  The microcontroller sends a simple pulsed output when a configurable output level is
@@ -49,6 +53,9 @@ The program is able estimate engine position with an algorithm that calculates t
 position from the last crank input pulse.  This allows a greater selection of engine positions than the number of teeth on
 the crank position sensor would allow.  Ex: 12 tooth crank wheel gives engine position in 30 degree increments.  Currently
 the program is able to do one degree increments with about 94% accuracy.
+
+/***************************************************************************************************************************/
+
 
 Limitations:
 
@@ -64,6 +71,9 @@ TPIC8101 does have an adjustable bandpass filter, however, it is not sufficient 
 (non-resonant means no built in bandpass filter).  My testing has indicated the TPIC8101’s bandpass filter has bandwidth
 of approximately 3khz when using a center frequency of 6.9khz.  This means a non-resonant sensor will need additional
 filtering.
+
+/***************************************************************************************************************************/
+
 
 Please contact me via email if you have any input/questions.
 
