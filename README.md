@@ -1,9 +1,22 @@
-TPIC8101
-====
 Propeller micro to TPIC8101 Interface
+=========================================================================================================================
+Setup:
 
 Use simpleide compiler.  Set compiler type to "C", set memory model to "LMM Main Ram", set optimization to "-O2Speed".  The last two settings significantly reduce the time needed to send and recieve data via SPI.
+=========================================================================================================================
+Connections: Must use current limiting resistors for 5v inputs.  Voltage dividers not needed due to propeller's internal over voltage diode.  I repeat must use current limiting resistor with 5v inputs.  4k7 ohm resistor will do the job.
 
+Propeller             TPIC8101
+1                     SDO (MISO)
+5                     SDI (MOSI)
+7                     INT/HOLD
+9                     SCLK (clock)
+11                    CS (slave select)
+
+Propeller             Others
+16                    Cam Sensor
+17                    Crank Sensor
+=========================================================================================================================
 Information about this project:
 
 I am an electrical and computer engineering student that has been developing a knock sensor interface that does not need to be disabled at high RPM's.  Generally, an engine management system ignores the knock sensor after a specific rpm because, it cannot differentiate between mechanical noise and actual knock at high rpm's.  This means you have to tune conservatively, so, you are making less horsepower and torque.
