@@ -1,0 +1,552 @@
+/*
+Copyright (C) <2014>  <David R. Spillman>
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program.  If not, see <http://www.gnu.org/licenses/>
+
+See attached COPYING.c
+*/
+
+/****************************************************************************************************************
+*TPIC8101 Driver                                                                                                *
+*V1.5A                                                                                                          *
+*last modified 07/04/14                                                                                         *
+*Updated to use built in propeller counters & added angle questimator                                           *
+*Creator: David R. Spillman                                                                                     *
+*                                                                                                               *
+*Goal:                                                                                                          *
+*Reduce false positives from knock sensor at high engine speed by ignoring knock sensor when valves open or     *
+*close.                                                                                                         *
+*                                                                                                               *
+*Interfaces Parallax Propeller with a TI TPIC8101 IC.  TPIC8101 is used to interpret knock sensor (basically    *
+*just a piezo mic) analog signal and send relevant dataOutto microcontroller.                                   *
+*Current engine location (relative to 720 deg cycle) determined by counting pulses from two engine postion      *
+*sensors.  Information is used as part of a feedback loop to optimize igntion timing for increased efficiency.  *
+*                                                                                                               *
+*Knock Output is triggered by 10-bit digital integrator output level.  This means no need for additional ADC.   *
+*                                                                                                               *
+*Signal path: amplifies signal, channel select mux, AAF, ADC, programmable gain, programmable band-pass filter, *
+*full-wave rectified, programmable integrator, amplified DAC output and/or SPI digital output                   *
+*                                                                                                               *          
+****************************************************************************************************************/
+
+#include "simpletools.h"
+
+
+/****************************************************************************************************************
+*Variables below are application dependent                                                                      *
+****************************************************************************************************************/
+
+const int 
+//LSTART = listening window start in degrees AFTDC, when do you want to listen
+LSTART = 40, 
+
+//LSTOP = listening window stop in degrees AFTDC, when do you want to stop listening
+LSTOP = 120;
+
+const double
+//TOOTHCOUNT = how many crank teeth, how many teeth are seen in 360 degrees of crank
+TOOTHCOUNT = 12, 
+//FTOOTH = how many degrees first crank tooth is after cam/reset tooth
+FTOOTH = -38.5;
+
+//Need algorithm to calculate windows depending on number of cylinders
+//NUMCYL = number of cylinders
+//NUMCYL = 4;
+
+
+
+const unsigned char 
+//see datasheet
+//only change values after "+"
+PRESCALER = (0b01000000 + 0b00110), 
+CHSEL = (0b11100000 + 0b0), 
+BANDPASS = (0b00000000 + 41), 
+GAIN = (0b10000000 + 40);
+
+/****************************************************************************************************************
+*End of user defined variables                                                                                  *
+****************************************************************************************************************/
+
+ 
+//Prototypes for functions
+float cTooth(int firstTooth, int winDeg, int toothCount);
+float timeMult(int firstTooth, int startDeg, int toothCount);
+unsigned int SPI(unsigned int dacRec);
+void calcTCREV();
+void tickTock();
+void deg();      
+void crankPos();                              
+void cKnock();
+void setSettings();
+void testNew();
+void keepTrack();
+void changTc();
+
+//variables used by mult. cogs
+volatile int go, stop, cRev[32];
+
+volatile unsigned int newA = 31, a=0, rpm, spiRequest, toothPos, dacOut, sTime[2], fTime[2];
+
+//constant variables used by mult. cogs
+const unsigned char ENABLEADV = 0b01110001;
+
+//array to hold all given time constants
+const int TC[32] = {40, 45, 50, 55, 60, 65, 70, 75, 80, 90, 100, 110, 
+120, 130, 140, 150, 160, 180, 200, 220, 240, 260, 280, 300, 320, 360, 
+400, 440, 480, 520, 560, 600};
+
+/**************************************************************************************************************/
+
+int main()
+{
+  
+  //let IC wake up  
+  pause(1);
+  print("Start \n");
+  //frees up terminal by releasing it from this cog
+  //simpleterm_close();
+
+  //start up the cogs and functions
+  cog_run(&crankPos, 80);
+  setSettings();
+  calcTCREV();
+  cog_run(&cKnock, 80);
+  cog_run(&keepTrack, 100);
+  cog_run(&tickTock, 80);
+  cog_run(&changTc, 100);
+  setSettings();
+  //print("Started Cogs \n");
+  for(int c = 1; c < 32; c++)
+  {
+    print("rpm %d= %d\n", c, cRev[c]);
+  }
+  while(1)
+  {
+    print("rpm = %u\tnewA = %u\ta = %u\tdacOut = %u\n", rpm, a, newA, dacOut); 
+    pause(200);
+  }
+    
+}
+
+/**************************************************************************************************************/
+
+void tickTock()
+{
+  unsigned int x=0;
+  while(1)
+  {
+    for(int i = 1; i< 60; i++)
+    {
+      while(x<=24)
+      {
+        if(x==24)
+        {
+          high(2);
+          low(2);
+          x++;
+        }
+        else
+        {
+          waitcnt(CLKFREQ/(700+(i*25)) + CNT);
+          high(0);
+          low(0);
+          x++;
+          waitcnt(CLKFREQ/(700+(i*25)) + CNT);
+        }
+      }
+      x = 0;
+    }
+    for(int i = 60; i>1; i--)
+    {
+      while(x<=24)
+      {
+        if(x==24)
+        {
+          high(2);
+          low(2);
+          x++;
+        }
+        else
+        {
+          waitcnt(CLKFREQ/(700+(i*25)) + CNT);
+          high(0);
+          low(0);
+          x++;
+          waitcnt(CLKFREQ/(700+(i*25)) + CNT);
+        }
+      }
+      x = 0;
+    }
+  }
+}
+
+//monitors knock output from TPIC8101 and sends knock true output to ECU
+void cKnock()
+{
+  unsigned int intPin, c, notYet = 0, dacRec, lastBits;
+  pause(100);
+  //simpleterm_open();
+  
+  for(c = 1; c < 32; c++)
+  {
+    //print("rpm %d= %d\n", c, cRev[c]);
+  }
+
+  while(1)
+  {  
+    intPin = get_state(7);
+
+    if(intPin == 0 && notYet == 1 && spiRequest == 0)
+    {
+        spiRequest = 1;
+        dacRec = SPI(PRESCALER);   
+        //get D7-D0 of digital integrator output
+        dacRec = SPI(CHSEL);
+
+        //get D9 to D8 of digital integrator output followed by six zeros
+        lastBits = SPI(CHSEL); 
+ 
+        //shift bits two over
+        lastBits<<=2;
+        //or with D7-D0
+        dacRec |= lastBits;
+        //print("dacRec = %u\n", dacRec);
+        notYet = 0;
+        spiRequest = 0;
+        //set knock output high if threshold is reached
+        dacOut = dacRec;
+        if(dacOut >= 600)
+        {
+          high(23);
+
+          low(23);
+        }
+    }
+
+    //notYet keeps from sending SPI dac information more than once
+    else if(intPin == 1 && notYet == 0)
+    {
+      notYet = 1;
+    }
+    
+  }
+
+}
+
+/****************************************************************************************************************/
+//Uses built in timer CTRA to count rising edges of crank sensor
+//Uses built in timer CTRB to count rising edges of cam sensor
+void crankPos()
+{
+  unsigned int previous, checkIf = 1, sWaitTime = 80000000, fWaitTime = 80000000;
+  int sTooth[4], fTooth[4];
+
+  sTooth[0] = cTooth(FTOOTH, LSTART, TOOTHCOUNT);
+  for(int x = 1; x < 4; x++)
+  {
+    sTooth[x] = ((180/(360/TOOTHCOUNT))*x)+sTooth[0];
+  }
+  
+  fTooth[0] = cTooth(FTOOTH, LSTOP, TOOTHCOUNT);
+  for(int x = 1; x < 4; x++)
+  {
+    fTooth[x] = ((180/(360/TOOTHCOUNT))*x)+fTooth[0];
+  }
+
+  //crank
+  //set counter A to Pos edge with Apin = 17
+  CTRA = (0b01010<<26) + 17;
+  //increase counter A by one each pulse  
+  FRQA = 1;
+
+  //cam/reset
+  //set counter B to Pos edge with Apin = 16
+  CTRB = (0b01010<<26) + 16;
+  FRQB = 1;
+  toothPos = PHSA;
+  while(1)
+  {
+    previous = PHSB;
+    //stay inside while loop until cam pulse
+    while((previous) == PHSB)
+    {
+      toothPos = PHSA;
+      if(stop == 1)
+      {
+        low(7);
+        go = 1;
+      }
+      //tooth to start listening
+      //also uses waitcnt to delay time of waitTime to approximate crank angle in higher res. than wheel offers
+        if((PHSA == sTooth[0] && checkIf==0)||(PHSA == sTooth[1] && checkIf==0)||(PHSA == sTooth[2] && checkIf==0)||(PHSA == sTooth[3] && checkIf==0))
+        {
+          waitcnt(sWaitTime + CNT);        
+          high(7);
+          checkIf = 1;
+          go = 0;
+        } 
+      //tooth to stop listening
+      //this can also be configured with a wait time but currently is not
+        else if((PHSA == fTooth[0])||(PHSA == fTooth[1])||(PHSA == fTooth[2])||(PHSA == fTooth[3]))
+        {
+          waitcnt(fWaitTime + CNT);
+          low(7);
+          checkIf = 0;
+        }
+        //average last two calc times
+        sWaitTime = (sTime[0]+sTime[1])/2;
+        fWaitTime = (fTime[0]+fTime[1])/2;
+    }
+    PHSA = 0;
+    toothPos = PHSA;
+
+  }
+}
+
+/**************************************************************************************************************/
+//Calculate time between rising edges
+void keepTrack()
+{
+  
+  float sMult, fMult;
+  
+  sMult = timeMult(FTOOTH, LSTART, TOOTHCOUNT);
+  fMult = timeMult(FTOOTH, LSTOP, TOOTHCOUNT);
+  
+  unsigned int gTime;
+  CTRA = (0b00001<<26);
+  FRQA = 1;
+  
+  CTRB = (0b01010<<26) + 17;
+  FRQB = 1;
+
+  while(1)
+  {
+    for(int x = 0; x<2; x++)
+    {
+      //wait for rising edge
+      while(PHSB == 0)
+      {
+        //do nothing
+      }
+      
+      gTime = PHSA;
+
+      //time after pulse needed to get to start of listening window
+      //subtract approx number of clock cycles needed to complete if statment in crankPosition
+      sTime[x] = (gTime*sMult)-1664;
+
+      //time after pulse needed to get to end of listening window
+      //formula is about 94% accurate up to 20k rpm with a 12 tooth wheel
+      fTime[x] = (gTime*fMult)+2200;
+
+      //two eq. above may need tweaking with some sort of equation, error is not just from clock cycles required
+ 
+      PHSB = 0;
+      PHSA = 0;
+    }
+      //tweleve teeth per rev
+      //convert clk pulses between teeth to revs per minute
+      double calc = ((1/(gTime/80000000.0))*60)/TOOTHCOUNT;
+      //rpm = calc;
+      int temp = (int) calc;
+      rpm = temp;
+      //rpm = gTime;
+  }
+}
+
+void changTc()
+{
+  unsigned int g, intFlag, middle;
+    //updates time constant based on rpm range
+    //checks each range until correct range is found
+    //can be changed to several if else if statements if loop is too slow
+  while(1)
+  {
+    for(g = 0; g < 31; g++)
+    {
+      middle = (cRev[g]-cRev[g+1])/2;
+      if(rpm < (cRev[g]+middle) && (rpm >= (cRev[g]-middle)))
+      {
+        newA = (g);
+      }
+		
+      else if(rpm > cRev[0])
+      {
+        newA = 0;
+      }
+    }
+
+      //if newA has changed, send new time constant
+      //avoids repeatedly sending same time constant
+      if (newA != a)
+      {
+        intFlag = get_state(7);
+        while(spiRequest != 0 || intFlag != 0)
+        {
+          intFlag = get_state(7);
+        }
+
+        spiRequest = 1;
+        SPI(0b11000000 + newA);
+        a = newA;
+        spiRequest = 0;
+      }  
+  }
+}
+
+/**************************************************************************************************************/
+
+//Send Config information to TPIC8101 over SPI
+void setSettings()
+{
+  spiRequest = 1;
+  SPI(PRESCALER);
+
+  SPI(CHSEL);
+
+  SPI(BANDPASS);
+
+  SPI(GAIN);
+  
+  SPI(ENABLEADV);
+  SPI(ENABLEADV);  
+  spiRequest = 0;
+}
+
+/**************************************************************************************************************/
+
+//bit bangs SPI data
+//gets 8 bit response
+//set whichBits = 2 for standard response
+//set whichBits = 1 for dacRec bits d7-d0
+//set whichBits = 0 for dacRec bits d9-d8
+//gets 10 bit data from integrator
+//bit bangs SPI data
+//gets 8 bit response
+//set whichBits = 2 for standard response
+//set whichBits = 1 for dacRec bits d7-d0
+//set whichBits = 0 for dacRec bits d9-d8
+//gets 10 bit data from integrator
+unsigned int SPI(unsigned int dataOut)
+{
+  unsigned int g = 0, MISO, dacIn = 0, pin5 = 1<<5, pin9 = 1<<9, pin11 = 1<<11, spiPins = 0b10101<<5;
+  DIRA |= spiPins;
+
+  //bring CS low
+  DIRA |= pin11;
+
+  //Bit Bangs SPI
+  //MSB to LSB 8 bits
+  for (; g < 8; g++)
+  {
+    //leftmost bit
+    //high if bit is 1, low if bit is 0
+    if (dataOut& 0b10000000)
+    {
+      OUTA |= pin5;
+    }
+    else
+    {
+      OUTA = 0;
+    }
+         
+    //pulse clock
+    OUTA |= pin9;      
+    OUTA ^= pin9; 
+     
+    dataOut<<=1;
+    
+    //shift in MISO
+    MISO = (INA& 0b10)>>1;
+    //print("MISO %d = %d\n", g, MISO);
+    //print("dacIn %d = %d\n", g, dacIn);
+    if(g == 0)
+    {    
+      dacIn = MISO;
+    }
+    
+    else
+    {
+      dacIn = dacIn<<1;
+      dacIn |= MISO;
+    }
+  }
+  //Release pins
+  DIRA ^= pin11;
+  DIRA ^= spiPins;
+  return(dacIn);
+}
+
+
+/**************************************************************************************************************/
+
+//Tc is typically Tint/(2*pi*VOUT). Where Tc is the integrator time constant, 
+//Tint is the listening window (how long you set INT/Hold pin active), and VOUT 
+//is the voltage you want to trigger on (typically 4.5V). 
+//This is indicated on the "TPIC8101 Training" pdf
+void calcTCREV()
+{
+  double vOut = 4.5, pi = 3.14159265358979;
+
+  for(int i = 0; i < 32; i++)
+  {
+    double h = (1/(((TC[i]*2*pi*vOut/1000000)/(LSTOP-LSTART))*360))*60;
+    cRev[i] = h;
+  }
+}
+
+
+//calculate tooth closest to but not greater than start window
+float cTooth(int firstTooth, int windDeg, int toothCount)
+{
+  float calcTooth, degreePer, degDiff;
+  degreePer = 360/toothCount;
+  
+  //subtract angle of first tooth from start window angle
+  degDiff = windDeg - firstTooth;
+  calcTooth = (degDiff/degreePer)+1;
+  return calcTooth;
+}
+
+//calculate multiplier for window timer
+float timeMult(int firstTooth, int startDeg, int toothCount)
+{
+  float calcTooth;
+  calcTooth = cTooth(firstTooth, startDeg, toothCount);
+  int tempStore;
+  float timeMult;
+  tempStore = (int) calcTooth;
+  timeMult = calcTooth - tempStore;
+  
+  
+  return timeMult;
+}
+
+/*
+Copyright (C) <2014>  <David R. Spillman>
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program.  If not, see <http://www.gnu.org/licenses/>
+
+See attached COPYING.c
+*/
