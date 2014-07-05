@@ -18,7 +18,7 @@ See attached COPYING.c
 
 /****************************************************************************************************************
 *TPIC8101 Driver                                                                                                *
-*V1.5A                                                                                                          *
+*V1.4C                                                                                                          *
 *last modified 07/04/14                                                                                         *
 *Updated to use built in propeller counters & added angle questimator                                           *
 *Creator: David R. Spillman                                                                                     *
@@ -32,7 +32,7 @@ See attached COPYING.c
 *Current engine location (relative to 720 deg cycle) determined by counting pulses from two engine postion      *
 *sensors.  Information is used as part of a feedback loop to optimize igntion timing for increased efficiency.  *
 *                                                                                                               *
-*Knock Output is triggered by 10-bit digital integrator output level.  This means no need for additional ADC.   *
+*Knock Output is triggered by 10-bit digital integrator output level.  This means no need for an ADC.           *
 *                                                                                                               *
 *Signal path: amplifies signal, channel select mux, AAF, ADC, programmable gain, programmable band-pass filter, *
 *full-wave rectified, programmable integrator, amplified DAC output and/or SPI digital output                   *
@@ -139,7 +139,8 @@ int main()
 }
 
 /**************************************************************************************************************/
-
+//this is code to simulate an engine operating at various RPM's
+//a logic analyzer makes this easy to follow
 void tickTock()
 {
   unsigned int x=0;
@@ -195,12 +196,6 @@ void cKnock()
 {
   unsigned int intPin, c, notYet = 0, dacRec, lastBits;
   pause(100);
-  //simpleterm_open();
-  
-  for(c = 1; c < 32; c++)
-  {
-    //print("rpm %d= %d\n", c, cRev[c]);
-  }
 
   while(1)
   {  
@@ -266,7 +261,6 @@ void crankPos()
   //crank
   //set counter A to Pos edge with Apin = 17
   CTRA = (0b01010<<26) + 17;
-  //increase counter A by one each pulse  
   FRQA = 1;
 
   //cam/reset
@@ -323,6 +317,7 @@ void keepTrack()
   sMult = timeMult(FTOOTH, LSTART, TOOTHCOUNT);
   fMult = timeMult(FTOOTH, LSTOP, TOOTHCOUNT);
   
+  //set counters to measure time between rising edges
   unsigned int gTime;
   CTRA = (0b00001<<26);
   FRQA = 1;
@@ -507,7 +502,7 @@ void calcTCREV()
 }
 
 
-//calculate tooth closest to but not greater than start window
+//calculate tooth closest to but not greater than start/stop window
 float cTooth(int firstTooth, int windDeg, int toothCount)
 {
   float calcTooth, degreePer, degDiff;
