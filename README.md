@@ -4,8 +4,11 @@ Propeller micro to TPIC8101 Interface
 
 Setup:
 
-Use simpleide compiler.  Set compiler type to "C", set memory model to "LMM Main Ram", set optimization to 
+Use SimpleIDE compiler.  Set compiler type to "C", set memory model to "LMM Main Ram", set optimization to 
 "-O2Speed".  The last two settings significantly reduce the time needed to send and recieve data via SPI.
+
+Link to download SimpleIDE
+https://sites.google.com/site/propellergcc/documentation/simpleide
 
 /***************************************************************************************************************************/
 
