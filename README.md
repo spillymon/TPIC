@@ -9,7 +9,9 @@ Use simpleide compiler.  Set compiler type to "C", set memory model to "LMM Main
 
 /***************************************************************************************************************************/
 
-Connections: Must use current limiting resistors for 5v inputs.  Voltage dividers not needed due to propeller's 
+Connections: 
+
+Must use current limiting resistors for 5v inputs.  Voltage dividers not needed due to propeller's 
 internal over voltage diode.  I repeat must use current limiting resistor with 5v inputs.  4k7 ohm resistor will 
 do the job.
 
