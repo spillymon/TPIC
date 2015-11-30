@@ -81,4 +81,4 @@ filtering.
 Please contact me via email if you have any input/questions.
 
 David R. Spillman
-moldspectors@gmail.com
+spillman.engineered@gmail.com
